@@ -22,7 +22,7 @@ exports.stkPush = async (req, res) => {
 };
 
 exports.callback = async (req, res) => {
-  console.log("MPESA CALLBACK:", JSON.stringify(req.body, null, 2));
+  console.log("--------MPESA CALLBACK---------");
   res.json({ ResultCode: 0, ResultDesc: "Accepted" });
 
   const stk = req.body.Body?.stkCallback;

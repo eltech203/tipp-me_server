@@ -88,7 +88,7 @@ function sendStk(phone, amount, reference) {
             PartyA: phone,
             PartyB: process.env.MPESA_SHORTCODE,
             PhoneNumber: phone,
-            CallBackURL: 'https://tipp-meserver-production.up.railway.app/api/payments/callback',
+            CallBackURL: 'https://tipp-meserver-production.up.railway.app/api/payments/callback/',
             AccountReference: reference,
             TransactionDesc: "Support / Tip",
           },

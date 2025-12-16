@@ -26,10 +26,11 @@ exports.stkPush = async (req, res) => {
 
 
  
-exports.callback = async function(req, res)  {
+exports.callback = async function(req, res )  {
   console.log("------MPESA CALLBACK ----" )
 
    try {
+    console.log("Callback Desc:", callback.ResultDesc);
     const callback = req.body.Body?.stkCallback;
     if (!callback) return console.error("❌ No stkCallback found in body");
 

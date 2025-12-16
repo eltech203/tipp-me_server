@@ -22,14 +22,10 @@ exports.stkPush = async (req, res) => {
 };
 
 exports.callback = async (req, res) => {
-  console.log("--------MPESA CALLBACK---------");
+  console.log("------MPESA CALLBACK ----");
+  res.json({ ResultCode: 0, ResultDesc: "Accepted" });
 
-  const stk = req.body.Body?.stkCallback;
-  if (!stk || stk.ResultCode !== 0) return;
-
-  const lock = await redis.setNX(`stk:${stk.CheckoutRequestID}`, "1");
-  if (!lock) return;
-  await redis.expire(`stk:${stk.CheckoutRequestID}`, 600);
+  const stk = req.body.Body.stkCallback;
 
   const meta = stk.CallbackMetadata.Item;
   const amount = meta.find(i => i.Name === "Amount")?.Value;

@@ -48,30 +48,7 @@ exports.callback = async function(req, res )  {
     const metaKey = callback.CheckoutRequestID;
 
     
- db.query(
-    "SELECT * FROM payment_intents WHERE reference = ?",
-    [reference],
-    (err, rows) => {
-      if (!rows.length) return;
 
-      const intent = rows[0];
-      const fee = amount * 0.05;
-      const net = amount - fee;
-
-      db.query(
-        `INSERT INTO wallet_ledger
-        (user_id, entry_type, direction, gross_amount, fee_amount, net_amount, reference)
-        VALUES (?, 'TIP_RECEIVED', 'CREDIT', ?, ?, ?, ?)`,
-        [profile_id, amount, fee, net, receipt]
-      );
-
-      db.query(
-        `UPDATE wallets SET pending_balance = pending_balance + ?
-         WHERE user_id = ?`,
-        [net, profile_id]
-      );
-    }
-  );
 
 
   

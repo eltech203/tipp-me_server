@@ -27,10 +27,7 @@ exports.stkPush = async (req, res) => {
 
  
 exports.callback = async function(req, res)  {
-  console.log("------MPESA CALLBACK ----" );
-
-  const stk = req.body.Body.stkCallback;
-
+  console.log("------MPESA CALLBACK ----" )
 
    try {
     const callback = req.body.Body?.stkCallback;
@@ -76,8 +73,7 @@ exports.callback = async function(req, res)  {
   );
 
 
-   
-
+  
   } catch (err) {
     console.error("❌ Callback handling error:", err.message);
   }

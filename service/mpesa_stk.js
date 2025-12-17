@@ -126,11 +126,11 @@ router.post("/stk-push", accessToken, (req, res) => {
 /* ----------------------------------------------------
    📥 STK CALLBACK
 ---------------------------------------------------- */
-router.post("/callback", async (req, res) => {
+router.post("/callback", (req, res) => {
   console.log("📩 MPESA CALLBACK");
   console.log(JSON.stringify(req.body, null, 2));
 
-  // ALWAYS ACK MPESA
+  // ✅ ALWAYS ACK MPESA FIRST
   res.json({ ResultCode: 0, ResultDesc: "Accepted" });
 
   try {
@@ -138,120 +138,159 @@ router.post("/callback", async (req, res) => {
     if (!callback || callback.ResultCode !== 0) return;
 
     const meta = paymentMetaStore[callback.CheckoutRequestID];
-    if (!meta) return console.error("❌ Missing meta");
+    if (!meta) {
+      console.error("❌ Missing payment meta");
+      return;
+    }
 
-    const { profile_id, uid } = meta;
-    if (!profile_id || isNaN(profile_id)) return;
+    const { profile_id, uid, reference } = meta;
 
-    const items = callback.CallbackMetadata.Item;
+    if (!profile_id || isNaN(profile_id)) {
+      console.error("❌ Invalid profile_id:", profile_id);
+      return;
+    }
+
+    // Extract MPESA values
+    const items = callback.CallbackMetadata?.Item || [];
     const amount = Number(items.find(i => i.Name === "Amount")?.Value);
-    const reference = items.find(i => i.Name === "MpesaReceiptNumber")?.Value;
-    if (!amount || !reference) return;
+    const receipt = items.find(i => i.Name === "MpesaReceiptNumber")?.Value;
+
+    if (!amount || !receipt) return;
 
     const fee = Number((amount * 0.05).toFixed(2));
     const net = Number((amount - fee).toFixed(2));
 
+    // 🔒 START TRANSACTION
     db.getConnection((err, conn) => {
-      if (err) return console.error(err);
+      if (err) {
+        console.error("❌ DB connection error:", err);
+        return;
+      }
+
+      const rollback = (error) => {
+        console.error("❌ TX rollback:", error);
+        conn.rollback(() => conn.release());
+      };
 
       conn.beginTransaction(err => {
-        if (err) return conn.release();
+        if (err) return rollback(err);
 
-        // 1️⃣ Ensure user wallet exists
+        // 1️⃣ Lock or create user wallet
         conn.query(
-          `
-          INSERT INTO wallets (user_id, uid, pending_balance)
-          VALUES (?, ?, 0)
-          ON DUPLICATE KEY UPDATE user_id = user_id
-          `,
-          [profile_id, uid],
-          err => {
-            if (err) return rollback(conn, err);
+          `SELECT pending_balance FROM wallets WHERE user_id = ? FOR UPDATE`,
+          [profile_id],
+          (err, rows) => {
+            if (err) return rollback(err);
 
-            // 2️⃣ Lock user wallet
-            conn.query(
-              `SELECT pending_balance FROM wallets WHERE user_id = ? FOR UPDATE`,
-              [profile_id],
-              (err, rows) => {
-                if (err) return rollback(conn, err);
+            let newUserBalance;
 
-                const prevBalance = Number(rows[0].pending_balance || 0);
-                const newBalance = prevBalance + net;
+            if (rows.length === 0) {
+              newUserBalance = net;
 
-                // 3️⃣ Insert USER ledger
-                conn.query(
-                  `
-                  INSERT INTO wallet_ledger
-                  (user_id, uid, entry_type, direction, gross_amount, fee_amount, net_amount, balance_after, reference, status)
-                  VALUES (?, ?, 'TIP_RECEIVED', 'CREDIT', ?, ?, ?, ?, ?, 'COMPLETED')
-                  `,
-                  [profile_id, uid, amount, fee, net, newBalance, reference],
-                  err => {
-                    if (err) return rollback(conn, err);
+              conn.query(
+                `INSERT INTO wallets (user_id, uid, pending_balance)
+                 VALUES (?, ?, ?)`,
+                [profile_id, uid, net],
+                err => {
+                  if (err) return rollback(err);
+                  insertLedger();
+                }
+              );
+            } else {
+              newUserBalance =
+                Number(rows[0].pending_balance || 0) + net;
 
-                    // 4️⃣ Update user wallet
-                    conn.query(
-                      `UPDATE wallets SET pending_balance = ? WHERE user_id = ?`,
-                      [newBalance, profile_id],
-                      err => {
-                        if (err) return rollback(conn, err);
+              conn.query(
+                `UPDATE wallets
+                 SET pending_balance = ?
+                 WHERE user_id = ?`,
+                [newUserBalance, profile_id],
+                err => {
+                  if (err) return rollback(err);
+                  insertLedger();
+                }
+              );
+            }
 
-                        // 5️⃣ Lock platform wallet (single row)
-                        conn.query(
-                          `SELECT balance FROM platform_wallet WHERE id = 1 FOR UPDATE`,
-                          (err, rows) => {
-                            if (err) return rollback(conn, err);
+            // 2️⃣ Insert wallet ledger
+            function insertLedger() {
+              conn.query(
+                `
+                INSERT INTO wallet_ledger
+                (user_id, uid, entry_type, direction,
+                 gross_amount, fee_amount, net_amount,
+                 balance_after, reference, status)
+                VALUES (?, ?, 'TIP_RECEIVED', 'CREDIT',
+                        ?, ?, ?, ?, ?, 'COMPLETED')
+                `,
+                [
+                  profile_id,
+                  uid,
+                  amount,
+                  fee,
+                  net,
+                  newUserBalance,
+                  receipt
+                ],
+                err => {
+                  if (err) return rollback(err);
+                  creditPlatform();
+                }
+              );
+            }
 
-                            const platformBalance = Number(rows[0].balance || 0);
-                            const newPlatformBalance = platformBalance + fee;
+            // 3️⃣ Lock platform wallet
+            function creditPlatform() {
+              conn.query(
+                `SELECT balance FROM platform_wallet WHERE id = 1 FOR UPDATE`,
+                (err, rows) => {
+                  if (err) return rollback(err);
 
-                            // 6️⃣ Update platform wallet
-                            conn.query(
-                              `UPDATE platform_wallet SET balance = ? WHERE id = 1`,
-                              [newPlatformBalance],
-                              err => {
-                                if (err) return rollback(conn, err);
+                  const platformBalance =
+                    rows.length > 0 ? Number(rows[0].balance) : 0;
 
-                                // 7️⃣ Insert platform ledger
-                                conn.query(
-                                  `
-                                  INSERT INTO platform_ledger
-                                  (entry_type, direction, amount, reference)
-                                  VALUES ('FEE', 'CREDIT', ?, ?)
-                                  `,
-                                  [fee, reference],
-                                  err => {
-                                    if (err) return rollback(conn, err);
+                  const newPlatformBalance = platformBalance + fee;
 
-                                    conn.commit(() => {
-                                      conn.release();
-                                      console.log("✅ User & platform credited:", reference);
-                                    });
-                                  }
-                                );
-                              }
-                            );
-                          }
-                        );
-                      }
-                    );
-                  }
-                );
-              }
-            );
+                  // Ensure platform wallet row exists
+                  conn.query(
+                    `INSERT INTO platform_wallet (id, balance)
+                     VALUES (1, ?)
+                     ON DUPLICATE KEY UPDATE balance = ?`,
+                    [newPlatformBalance, newPlatformBalance],
+                    err => {
+                      if (err) return rollback(err);
+
+                      // 4️⃣ Insert platform ledger
+                      conn.query(
+                        `
+                        INSERT INTO platform_ledger
+                        (entry_type, direction, amount, reference)
+                        VALUES ('FEE', 'CREDIT', ?, ?)
+                        `,
+                        [fee, receipt],
+                        err => {
+                          if (err) return rollback(err);
+
+                          // ✅ COMMIT EVERYTHING
+                          conn.commit(() => {
+                            conn.release();
+                            console.log("✅ Payment credited:", receipt);
+                          });
+                        }
+                      );
+                    }
+                  );
+                }
+              );
+            }
           }
         );
       });
     });
   } catch (err) {
-    console.error("❌ Callback crash:", err);
+    console.error("❌ Callback fatal error:", err);
   }
 });
-
-function rollback(conn, err) {
-  console.error("❌ TX ERROR:", err);
-  conn.rollback(() => conn.release());
-}
 /* ----------------------------------------------------
    🔎 STK QUERY
 ---------------------------------------------------- */

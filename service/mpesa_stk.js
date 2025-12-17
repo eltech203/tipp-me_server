@@ -62,7 +62,7 @@ const paymentMetaStore = {};
    📲 STK PUSH
 ---------------------------------------------------- */
 router.post("/stk-push", accessToken, (req, res) => {
-  const { phone, amount, profile_id } = req.body;
+  const { phone, amount, profile_id, uid } = req.body;
 
   console.log("STK Push Request:", req.body);
 

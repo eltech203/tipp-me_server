@@ -1,183 +1,164 @@
 const express = require("express");
 const request = require("request");
-const bodyParser = require("body-parser");
-const moment = require("moment");
-const router = express.Router();
 const cors = require("cors");
 const db = require("../config/db");
 
-///-----Port-----///
-const _urlencoded = express.urlencoded({ extended: false });
+const router = express.Router();
+
+/* ----------------------------------------------------
+   MIDDLEWARE
+---------------------------------------------------- */
 router.use(cors());
 router.use(express.json());
-router.use(express.static("public"));
+router.use(express.urlencoded({ extended: false }));
 
-// ---- ALLOW ACCESS ----- //
 router.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header(
     "Access-Control-Allow-Headers",
     "Origin, X-Requested-With, Content-Type, Accept, Authorization"
   );
-
-  if (req.method === "OPTIONS") {
-    res.header("Access-Control-Allow-Methods", "PUT, POST, PATCH, DELETE, GET");
-    return res.status(200).json({});
-  }
   next();
 });
 
-// ---- TEST ROUTE ---- //
+/* ----------------------------------------------------
+   TEST ROUTE
+---------------------------------------------------- */
 router.get("/", (req, res) => {
-  res.status(200).send({ message: "payments" });
+  res.status(200).json({ message: "Payments API running" });
 });
 
-// --------------------------------- //
-// 🔑 ACCESS TOKEN MIDDLEWARE
-// --------------------------------- //
+/* ----------------------------------------------------
+   MPESA ACCESS TOKEN MIDDLEWARE
+---------------------------------------------------- */
+const consumer_key = process.env.MPESA_CONSUMER_KEY;
+const consumer_secret = process.env.MPESA_CONSUMER_SECRET;
+const auth = Buffer.from(`${consumer_key}:${consumer_secret}`).toString("base64");
 
-const consumer_key = process.env.MPESA_CONSUMER_KEY; 
-const consumer_secret =process.env.MPESA_CONSUMER_SECRET; 
-const auth = Buffer.from(consumer_key + ":" + consumer_secret).toString("base64");
-
-function access(req, res, next) {
+function accessToken(req, res, next) {
   request(
     {
       url: "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
-      headers: { Authorization: "Basic " + auth },
+      headers: { Authorization: `Basic ${auth}` },
     },
-    (error, response, body) => {
-      if (error) {
-        console.error("❌ Error getting token:", error);
+    (err, response, body) => {
+      if (err) {
+        console.error("❌ Token error:", err);
         return res.status(500).json({ error: "Failed to get access token" });
       }
+
       req.access_token = JSON.parse(body).access_token;
       next();
     }
   );
 }
 
-// Temporary store (use Redis in production)
+/* ----------------------------------------------------
+   TEMP META STORE (REDIS RECOMMENDED)
+---------------------------------------------------- */
 const paymentMetaStore = {};
 
-// --------------------------------- //
-// 📲 STK PUSH
-// --------------------------------- //
-let phoneNumber, amount, user_id, candidate_id, category_id, transaction_type, vote_count;
+/* ----------------------------------------------------
+   📲 STK PUSH
+---------------------------------------------------- */
+router.post("/stk-push", accessToken, (req, res) => {
+  const { phone, amount, profile_id } = req.body;
 
-router.post("/stk-push", access, express.urlencoded({ extended: false }), function (req, res) {
-  phoneNumber = req.body.phone;
-  amount = req.body.amount;
-  profile_id = req.body.profile_id;
-  reference = `TIP-${Date.now()}`;
+  if (!phone || !amount || !profile_id) {
+    return res.status(400).json({ message: "Missing required fields" });
+  }
 
-  let endpoint = "https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest";
-  let auth = "Bearer " + req.access_token;
+  const shortCode = "174379";
+  const passKey =
+    "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919";
 
-  let shortCode = `174379`; // Sandbox Paybill
-  let passKey = `bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919`;
+  const timestamp = new Date().toISOString().replace(/[^0-9]/g, "").slice(0, -3);
+  const password = Buffer.from(`${shortCode}${passKey}${timestamp}`).toString(
+    "base64"
+  );
 
-  const timeStamp = new Date().toISOString().replace(/[^0-9]/g, "").slice(0, -3);
-  const password = Buffer.from(`${shortCode}${passKey}${timeStamp}`).toString("base64");
+  const reference = `TIP-${Date.now()}`;
 
   request(
     {
-      url: endpoint,
+      url: "https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest",
       method: "POST",
-      headers: { Authorization: auth },
+      headers: {
+        Authorization: `Bearer ${req.access_token}`,
+      },
       json: {
         BusinessShortCode: shortCode,
         Password: password,
-        Timestamp: timeStamp,
+        Timestamp: timestamp,
         TransactionType: "CustomerPayBillOnline",
-        Amount: amount,
-        PartyA: phoneNumber,
+        Amount: Number(amount),
+        PartyA: phone,
         PartyB: shortCode,
-        PhoneNumber: phoneNumber,
-        CallBackURL: "https://tipp-meserver-production.up.railway.app/api/payments/callback",
+        PhoneNumber: phone,
+        CallBackURL:
+          "https://tipp-meserver-production.up.railway.app/api/payments/callback",
         AccountReference: reference,
-        TransactionDesc: "Payment",
+        TransactionDesc: "Tip Payment",
       },
     },
     (error, response, body) => {
       if (error) {
-        console.log(error);
-        return res.status(404).json(error);
+        console.error("❌ STK error:", error);
+        return res.status(500).json(error);
       }
 
-      // ✅ Store meta data for callback
       if (body.CheckoutRequestID) {
         paymentMetaStore[body.CheckoutRequestID] = {
-          amount,
-          profile_id,
+          profile_id: Number(profile_id),
           reference,
-           // ⭐ CHANGE
         };
       }
 
-     return res.status(200).json(body);
+      res.status(200).json(body);
     }
   );
 });
 
-// --------------------------------- //
-// 📥 STK CALLBACK (FULL METHOD)
-// --------------------------------- //
+/* ----------------------------------------------------
+   📥 STK CALLBACK
+---------------------------------------------------- */
 router.post("/callback", async (req, res) => {
-  console.log("📩 STK CALLBACK RECEIVED");
+  console.log("📩 MPESA CALLBACK");
   console.log(JSON.stringify(req.body, null, 2));
 
-  // ALWAYS acknowledge Mpesa immediately
+  // ALWAYS ACK MPESA
   res.json({ ResultCode: 0, ResultDesc: "Accepted" });
 
   try {
     const callback = req.body?.Body?.stkCallback;
-    if (!callback) {
-      console.error("❌ No stkCallback found");
-      return;
-    }
+    if (!callback || callback.ResultCode !== 0) return;
 
-    const {
-      ResultCode,
-      ResultDesc,
-      CheckoutRequestID,
-      CallbackMetadata,
-    } = callback;
-
-    // ❌ Failed transaction
-    if (ResultCode !== 0) {
-      console.warn("⚠️ Transaction failed:", ResultDesc);
-      return;
-    }
-
-    // 🔑 Get metadata saved during stk push
-    const meta = paymentMetaStore[CheckoutRequestID];
+    const meta = paymentMetaStore[callback.CheckoutRequestID];
     if (!meta) {
-      console.error("❌ No metadata for CheckoutRequestID:", CheckoutRequestID);
+      console.error("❌ Missing meta data");
       return;
     }
 
-    const { profile_id, reference } = meta;
+    const { profile_id } = meta;
 
-    // 📦 Extract Mpesa values
-    const items = CallbackMetadata.Item;
-    const amount = items.find(i => i.Name === "Amount")?.Value;
+    if (!profile_id || isNaN(profile_id)) {
+      console.error("❌ Invalid profile_id:", profile_id);
+      return;
+    }
+
+    const items = callback.CallbackMetadata.Item;
+    const amount = Number(items.find(i => i.Name === "Amount")?.Value);
     const receipt = items.find(i => i.Name === "MpesaReceiptNumber")?.Value;
-    const phone = items.find(i => i.Name === "PhoneNumber")?.Value;
 
-    if (!amount || !receipt) {
-      console.error("❌ Missing amount or receipt");
-      return;
-    }
+    if (!amount || !receipt) return;
 
-    // 🧮 Calculate fee & net
-    const fee = amount * 0.05;
-    const net = amount - fee;
+    const fee = Number((amount * 0.05).toFixed(2));
+    const net = Number((amount - fee).toFixed(2));
 
-    // 💾 INSERT wallet ledger
+    // INSERT WALLET LEDGER
     db.query(
       `INSERT INTO wallet_ledger
-        (user_id, entry_type, direction, gross_amount, fee_amount, net_amount, reference)
+       (user_id, entry_type, direction, gross_amount, fee_amount, net_amount, reference)
        VALUES (?, 'TIP_RECEIVED', 'CREDIT', ?, ?, ?, ?)`,
       [profile_id, amount, fee, net, receipt],
       (err) => {
@@ -186,7 +167,7 @@ router.post("/callback", async (req, res) => {
           return;
         }
 
-        // 💰 UPDATE wallet balance
+        // UPDATE WALLET
         db.query(
           `UPDATE wallets
            SET pending_balance = pending_balance + ?
@@ -198,72 +179,49 @@ router.post("/callback", async (req, res) => {
               return;
             }
 
-            console.log("✅ Payment saved successfully:", receipt);
-
-            // 🧹 Cleanup
-            delete paymentMetaStore[CheckoutRequestID];
+            console.log("✅ Payment credited:", receipt);
+            delete paymentMetaStore[callback.CheckoutRequestID];
           }
         );
       }
     );
   } catch (err) {
-    console.error("❌ Callback processing error:", err);
+    console.error("❌ Callback crash:", err);
   }
 });
 
+/* ----------------------------------------------------
+   🔎 STK QUERY
+---------------------------------------------------- */
+router.post("/stk-push/query", accessToken, (req, res) => {
+  const { checkoutRequestId } = req.body;
 
-router.post(
-    "/stk-push/query",access,function(req, res, next) {
-        let _checkoutRequestId = req.body.checkoutRequestId;
+  const shortCode = "174379";
+  const passKey =
+    "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919";
 
-       let auth = "Bearer " + req.access_token;
+  const timestamp = new Date().toISOString().replace(/[^0-9]/g, "").slice(0, -3);
+  const password = Buffer.from(`${shortCode}${passKey}${timestamp}`).toString(
+    "base64"
+  );
 
-        let endpoint = "https://sandbox.safaricom.co.ke/mpesa/stkpushquery/v1/query";
-        let _shortCode = "174379";
-        let _passKey =
-            "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919";
-        const timeStamp = new Date()
-            .toISOString()
-            .replace(/[^0-9]/g, "")
-            .slice(0, -3);
-        const password = Buffer.from(
-            `${_shortCode}${_passKey}${timeStamp}`
-        ).toString("base64");
-
-        request({
-                url: endpoint,
-                method: "POST",
-                headers: {
-                    Authorization:  auth,
-                },
-                json: {
-                    BusinessShortCode: _shortCode,
-                    Password: password,
-                    Timestamp: timeStamp,
-                    CheckoutRequestID: _checkoutRequestId,
-                },
-            },
-            function(error, response, body) {
-                if (error) {
-                    console.log(error);
-                    res.status(404).json(body);
-                } else {
-                    var resDesc = body.ResponseDescription;
-                    res.status(200).json(body);
-                    if (res.status(200)) {
-                       
-                        var resDesc = body.ResponseDescription;
-                        var resultDesc = body.ResultDesc;
-                        console.log("Query Body", body);
-                    }
-
-                    next();
-                }
-            }
-        );
+  request(
+    {
+      url: "https://sandbox.safaricom.co.ke/mpesa/stkpushquery/v1/query",
+      method: "POST",
+      headers: { Authorization: `Bearer ${req.access_token}` },
+      json: {
+        BusinessShortCode: shortCode,
+        Password: password,
+        Timestamp: timestamp,
+        CheckoutRequestID: checkoutRequestId,
+      },
+    },
+    (err, response, body) => {
+      if (err) return res.status(500).json(err);
+      res.status(200).json(body);
     }
-);
-
-
+  );
+});
 
 module.exports = router;

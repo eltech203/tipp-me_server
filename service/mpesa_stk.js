@@ -64,6 +64,9 @@ const paymentMetaStore = {};
 router.post("/stk-push", accessToken, (req, res) => {
   const { phone, amount, profile_id } = req.body;
 
+  console.log("STK Push Request:", req.body);
+
+  
   if (!phone || !amount || !profile_id) {
     return res.status(400).json({ message: "Missing required fields" });
   }

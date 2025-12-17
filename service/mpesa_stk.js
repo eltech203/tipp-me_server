@@ -144,7 +144,6 @@ router.post("/callback", async (req, res) => {
     }
 
     const { profile_id, uid } = meta;
-
     if (!profile_id || isNaN(profile_id)) {
       console.error("❌ Invalid profile_id:", profile_id);
       return;
@@ -159,43 +158,87 @@ router.post("/callback", async (req, res) => {
     const fee = Number((amount * 0.05).toFixed(2));
     const net = Number((amount - fee).toFixed(2));
 
-    // INSERT WALLET LEDGER
-    db.query(
-      `INSERT INTO wallet_ledger
-       (user_id,uid, entry_type, direction, gross_amount, fee_amount, net_amount, reference)
-       VALUES (?, ?, 'TIP_RECEIVED', 'CREDIT', ?, ?, ?, ?)`,
-      [profile_id, uid, amount, fee, net, receipt],
-      (err) => {
-        if (err) {
-          console.error("❌ wallet_ledger insert error:", err);
-          return;
-        }
-        // UPDATE WALLET
-        db.query(
-            "SELECT user_id FROM wallets WHERE user_id = ?",
-            [profile_id],
-            (err, rows) => {
-                if (rows.length === 0) {
-                db.query(
-                    "INSERT INTO wallets (user_id, uid, pending_balance) VALUES (?, ?, ?)",
-                    [profile_id, uid, net]
-                );
-                } else {
-                db.query(
-                    "UPDATE wallets SET pending_balance = pending_balance + ? WHERE user_id = ?",
-                    [net, profile_id]
-                );
-                }
-            }
-        );
+    // 🔒 TRANSACTION
+    db.getConnection((err, conn) => {
+      if (err) return console.error(err);
 
-      }
-    );
+      conn.beginTransaction(err => {
+        if (err) return conn.release();
+
+        // 1️⃣ Ensure wallet exists
+        conn.query(
+          `
+          INSERT INTO wallets (user_id, uid, pending_balance)
+          VALUES (?, ?, 0)
+          ON DUPLICATE KEY UPDATE user_id = user_id
+          `,
+          [profile_id, uid],
+          (err) => {
+            if (err) return rollback(conn, err);
+
+            // 2️⃣ Get current balance
+            conn.query(
+              `SELECT pending_balance FROM wallets WHERE user_id = ? FOR UPDATE`,
+              [profile_id],
+              (err, rows) => {
+                if (err) return rollback(conn, err);
+
+                const currentBalance = Number(rows[0].pending_balance || 0);
+                const balanceAfter = currentBalance + net;
+
+                // 3️⃣ Insert ledger WITH balance_after
+                conn.query(
+                  `
+                  INSERT INTO wallet_ledger
+                  (user_id, uid, entry_type, direction, gross_amount, fee_amount, net_amount, balance_after, reference, status)
+                  VALUES (?, ?, 'TIP_RECEIVED', 'CREDIT', ?, ?, ?, ?, ?, 'COMPLETED')
+                  `,
+                  [
+                    profile_id,
+                    uid,
+                    amount,
+                    fee,
+                    net,
+                    balanceAfter,
+                    receipt
+                  ],
+                  (err) => {
+                    if (err) return rollback(conn, err);
+
+                    // 4️⃣ Update wallet
+                    conn.query(
+                      `
+                      UPDATE wallets
+                      SET pending_balance = ?
+                      WHERE user_id = ?
+                      `,
+                      [balanceAfter, profile_id],
+                      (err) => {
+                        if (err) return rollback(conn, err);
+
+                        conn.commit(() => {
+                          conn.release();
+                          console.log("✅ Payment credited:", receipt);
+                        });
+                      }
+                    );
+                  }
+                );
+              }
+            );
+          }
+        );
+      });
+    });
   } catch (err) {
     console.error("❌ Callback crash:", err);
   }
 });
 
+function rollback(conn, err) {
+  console.error("❌ TX ERROR:", err);
+  conn.rollback(() => conn.release());
+}
 /* ----------------------------------------------------
    🔎 STK QUERY
 ---------------------------------------------------- */

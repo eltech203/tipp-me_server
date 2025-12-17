@@ -121,75 +121,99 @@ router.post("/stk-push", access, express.urlencoded({ extended: false }), functi
 });
 
 // --------------------------------- //
-// 📥 STK CALLBACK
+// 📥 STK CALLBACK (FULL METHOD)
 // --------------------------------- //
-router.post("/callback", async function (req, res) {
-  console.log(".......... 📩 STK Callback ..................");
-  console.log("RAW CALLBACK BODY:", JSON.stringify(req.body, null, 2));
+router.post("/callback", async (req, res) => {
+  console.log("📩 STK CALLBACK RECEIVED");
+  console.log(JSON.stringify(req.body, null, 2));
 
+  // ALWAYS acknowledge Mpesa immediately
   res.json({ ResultCode: 0, ResultDesc: "Accepted" });
 
   try {
-    const callback = req.body.Body?.stkCallback;
-    if (!callback) return console.error("❌ No stkCallback found in body");
-
-    if (callback.ResultCode !== 0) {
-      return console.warn("⚠️ Transaction failed:", callback.ResultDesc);
+    const callback = req.body?.Body?.stkCallback;
+    if (!callback) {
+      console.error("❌ No stkCallback found");
+      return;
     }
 
-    const metadata = callback.CallbackMetadata;
-    if (!metadata) return console.error("❌ No CallbackMetadata found");
+    const {
+      ResultCode,
+      ResultDesc,
+      CheckoutRequestID,
+      CallbackMetadata,
+    } = callback;
 
-    const amount = metadata.Item.find((i) => i.Name === "Amount")?.Value;
-    const transID = metadata.Item.find((i) => i.Name === "MpesaReceiptNumber")?.Value;
-    const phone = metadata.Item.find((i) => i.Name === "PhoneNumber")?.Value;
-    const transdate = new Date();
-    const metaKey = callback.CheckoutRequestID;
+    // ❌ Failed transaction
+    if (ResultCode !== 0) {
+      console.warn("⚠️ Transaction failed:", ResultDesc);
+      return;
+    }
 
-            db.query(
-            "SELECT * FROM payment_intents WHERE reference = ?",
-            [reference],
-            (err, rows) => {
-            if (!rows.length) return;
+    // 🔑 Get metadata saved during stk push
+    const meta = paymentMetaStore[CheckoutRequestID];
+    if (!meta) {
+      console.error("❌ No metadata for CheckoutRequestID:", CheckoutRequestID);
+      return;
+    }
 
-            const intent = rows[0];
-            const fee = amount * 0.05;
-            const net = amount - fee;
+    const { profile_id, reference } = meta;
 
-            db.query(
-                `INSERT INTO wallet_ledger
-                (user_id, entry_type, direction, gross_amount, fee_amount, net_amount, reference)
-                VALUES (?, 'TIP_RECEIVED', 'CREDIT', ?, ?, ?, ?)`,
-                [profile_id, amount, fee, net, transID]
-            );
+    // 📦 Extract Mpesa values
+    const items = CallbackMetadata.Item;
+    const amount = items.find(i => i.Name === "Amount")?.Value;
+    const receipt = items.find(i => i.Name === "MpesaReceiptNumber")?.Value;
+    const phone = items.find(i => i.Name === "PhoneNumber")?.Value;
 
-            db.query(
-                `UPDATE wallets SET pending_balance = pending_balance + ?
-                WHERE user_id = ?`,
-                [net, profile_id]
-            );
+    if (!amount || !receipt) {
+      console.error("❌ Missing amount or receipt");
+      return;
+    }
+
+    // 🧮 Calculate fee & net
+    const fee = amount * 0.05;
+    const net = amount - fee;
+
+    // 💾 INSERT wallet ledger
+    db.query(
+      `INSERT INTO wallet_ledger
+        (user_id, entry_type, direction, gross_amount, fee_amount, net_amount, reference)
+       VALUES (?, 'TIP_RECEIVED', 'CREDIT', ?, ?, ?, ?)`,
+      [profile_id, amount, fee, net, receipt],
+      (err) => {
+        if (err) {
+          console.error("❌ wallet_ledger insert error:", err);
+          return;
+        }
+
+        // 💰 UPDATE wallet balance
+        db.query(
+          `UPDATE wallets
+           SET pending_balance = pending_balance + ?
+           WHERE user_id = ?`,
+          [net, profile_id],
+          (err2) => {
+            if (err2) {
+              console.error("❌ wallet update error:", err2);
+              return;
             }
+
+            console.log("✅ Payment saved successfully:", receipt);
+
+            // 🧹 Cleanup
+            delete paymentMetaStore[CheckoutRequestID];
+          }
         );
-
-
-
-    // --- Save Payment ---
-    // const sql = `
-    //   INSERT INTO payments (
-    //     category_id, payment_date, amount_paid,
-    //     payment_method, transaction_id, payment_status, phone_number
-    //   ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    // `;
-
-   
+      }
+    );
   } catch (err) {
-    console.error("❌ Callback handling error:", err.message);
+    console.error("❌ Callback processing error:", err);
   }
 });
 
 
 router.post(
-    "/mpesa_stk_push/query",access,function(req, res, next) {
+    "/stk-push/query",access,function(req, res, next) {
         let _checkoutRequestId = req.body.checkoutRequestId;
 
        let auth = "Bearer " + req.access_token;

@@ -170,23 +170,25 @@ router.post("/callback", async (req, res) => {
           console.error("❌ wallet_ledger insert error:", err);
           return;
         }
-
         // UPDATE WALLET
         db.query(
-          `UPDATE wallets
-           SET pending_balance = pending_balance + ?
-           WHERE uid = ?`,
-          [net, uid],
-          (err2) => {
-            if (err2) {
-              console.error("❌ wallet update error:", err2);
-              return;
+            "SELECT user_id FROM wallets WHERE user_id = ?",
+            [profile_id],
+            (err, rows) => {
+                if (rows.length === 0) {
+                db.query(
+                    "INSERT INTO wallets (user_id, uid, pending_balance) VALUES (?, ?, ?)",
+                    [profile_id, uid, net]
+                );
+                } else {
+                db.query(
+                    "UPDATE wallets SET pending_balance = pending_balance + ? WHERE user_id = ?",
+                    [net, profile_id]
+                );
+                }
             }
-
-            console.log("✅ Payment credited:", receipt);
-            delete paymentMetaStore[callback.CheckoutRequestID];
-          }
         );
+
       }
     );
   } catch (err) {

@@ -66,7 +66,7 @@ router.post("/stk-push", accessToken, (req, res) => {
 
   console.log("STK Push Request:", req.body);
 
-  
+
   if (!phone || !amount || !profile_id) {
     return res.status(400).json({ message: "Missing required fields" });
   }
@@ -114,6 +114,7 @@ router.post("/stk-push", accessToken, (req, res) => {
         paymentMetaStore[body.CheckoutRequestID] = {
           profile_id: Number(profile_id),
           reference,
+          uid,
         };
       }
 
@@ -142,7 +143,7 @@ router.post("/callback", async (req, res) => {
       return;
     }
 
-    const { profile_id } = meta;
+    const { profile_id, uid } = meta;
 
     if (!profile_id || isNaN(profile_id)) {
       console.error("❌ Invalid profile_id:", profile_id);
@@ -161,9 +162,9 @@ router.post("/callback", async (req, res) => {
     // INSERT WALLET LEDGER
     db.query(
       `INSERT INTO wallet_ledger
-       (user_id, entry_type, direction, gross_amount, fee_amount, net_amount, reference)
-       VALUES (?, 'TIP_RECEIVED', 'CREDIT', ?, ?, ?, ?)`,
-      [profile_id, amount, fee, net, receipt],
+       (user_id,uid, entry_type, direction, gross_amount, fee_amount, net_amount, reference)
+       VALUES (?, ?, 'TIP_RECEIVED', 'CREDIT', ?, ?, ?, ?)`,
+      [profile_id, uid, amount, fee, net, receipt],
       (err) => {
         if (err) {
           console.error("❌ wallet_ledger insert error:", err);
@@ -174,8 +175,8 @@ router.post("/callback", async (req, res) => {
         db.query(
           `UPDATE wallets
            SET pending_balance = pending_balance + ?
-           WHERE user_id = ?`,
-          [net, profile_id],
+           WHERE uid = ?`,
+          [net, uid],
           (err2) => {
             if (err2) {
               console.error("❌ wallet update error:", err2);

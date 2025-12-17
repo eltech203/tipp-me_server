@@ -234,10 +234,30 @@ router.post("/callback", (req, res) => {
                 ],
                 err => {
                   if (err) return rollback(err);
-                  creditPlatform();
+                  updateGoalRaised();
                 }
               );
             }
+
+            function updateGoalRaised() {
+                conn.query(
+                    `
+                    UPDATE profiles
+                    SET goal_raised = goal_raised + ?
+                    WHERE id = ? AND status = 'ACTIVE'
+                    `,
+                    [amount, profile_id],
+                    (err, result) => {
+                    if (err) return rollback(err);
+
+                    if (result.affectedRows === 0) {
+                        console.warn("⚠️ Profile not found or inactive:", profile_id);
+                    }
+
+                    creditPlatform(); // continue flow
+                    }
+                );
+             }
 
             // 3️⃣ Lock platform wallet
             function creditPlatform() {
@@ -283,6 +303,8 @@ router.post("/callback", (req, res) => {
                 }
               );
             }
+
+
           }
         );
       });

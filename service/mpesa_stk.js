@@ -138,34 +138,26 @@ router.post("/callback", async (req, res) => {
     if (!callback || callback.ResultCode !== 0) return;
 
     const meta = paymentMetaStore[callback.CheckoutRequestID];
-    if (!meta) {
-      console.error("❌ Missing meta data");
-      return;
-    }
+    if (!meta) return console.error("❌ Missing meta");
 
     const { profile_id, uid } = meta;
-    if (!profile_id || isNaN(profile_id)) {
-      console.error("❌ Invalid profile_id:", profile_id);
-      return;
-    }
+    if (!profile_id || isNaN(profile_id)) return;
 
     const items = callback.CallbackMetadata.Item;
     const amount = Number(items.find(i => i.Name === "Amount")?.Value);
-    const receipt = items.find(i => i.Name === "MpesaReceiptNumber")?.Value;
-
-    if (!amount || !receipt) return;
+    const reference = items.find(i => i.Name === "MpesaReceiptNumber")?.Value;
+    if (!amount || !reference) return;
 
     const fee = Number((amount * 0.05).toFixed(2));
     const net = Number((amount - fee).toFixed(2));
 
-    // 🔒 TRANSACTION
     db.getConnection((err, conn) => {
       if (err) return console.error(err);
 
       conn.beginTransaction(err => {
         if (err) return conn.release();
 
-        // 1️⃣ Ensure wallet exists
+        // 1️⃣ Ensure user wallet exists
         conn.query(
           `
           INSERT INTO wallets (user_id, uid, pending_balance)
@@ -173,53 +165,74 @@ router.post("/callback", async (req, res) => {
           ON DUPLICATE KEY UPDATE user_id = user_id
           `,
           [profile_id, uid],
-          (err) => {
+          err => {
             if (err) return rollback(conn, err);
 
-            // 2️⃣ Get current balance
+            // 2️⃣ Lock user wallet
             conn.query(
               `SELECT pending_balance FROM wallets WHERE user_id = ? FOR UPDATE`,
               [profile_id],
               (err, rows) => {
                 if (err) return rollback(conn, err);
 
-                const currentBalance = Number(rows[0].pending_balance || 0);
-                const balanceAfter = currentBalance + net;
+                const prevBalance = Number(rows[0].pending_balance || 0);
+                const newBalance = prevBalance + net;
 
-                // 3️⃣ Insert ledger WITH balance_after
+                // 3️⃣ Insert USER ledger
                 conn.query(
                   `
                   INSERT INTO wallet_ledger
                   (user_id, uid, entry_type, direction, gross_amount, fee_amount, net_amount, balance_after, reference, status)
                   VALUES (?, ?, 'TIP_RECEIVED', 'CREDIT', ?, ?, ?, ?, ?, 'COMPLETED')
                   `,
-                  [
-                    profile_id,
-                    uid,
-                    amount,
-                    fee,
-                    net,
-                    balanceAfter,
-                    receipt
-                  ],
-                  (err) => {
+                  [profile_id, uid, amount, fee, net, newBalance, reference],
+                  err => {
                     if (err) return rollback(conn, err);
 
-                    // 4️⃣ Update wallet
+                    // 4️⃣ Update user wallet
                     conn.query(
-                      `
-                      UPDATE wallets
-                      SET pending_balance = ?
-                      WHERE user_id = ?
-                      `,
-                      [balanceAfter, profile_id],
-                      (err) => {
+                      `UPDATE wallets SET pending_balance = ? WHERE user_id = ?`,
+                      [newBalance, profile_id],
+                      err => {
                         if (err) return rollback(conn, err);
 
-                        conn.commit(() => {
-                          conn.release();
-                          console.log("✅ Payment credited:", receipt);
-                        });
+                        // 5️⃣ Lock platform wallet (single row)
+                        conn.query(
+                          `SELECT balance FROM platform_wallet WHERE id = 1 FOR UPDATE`,
+                          (err, rows) => {
+                            if (err) return rollback(conn, err);
+
+                            const platformBalance = Number(rows[0].balance || 0);
+                            const newPlatformBalance = platformBalance + fee;
+
+                            // 6️⃣ Update platform wallet
+                            conn.query(
+                              `UPDATE platform_wallet SET balance = ? WHERE id = 1`,
+                              [newPlatformBalance],
+                              err => {
+                                if (err) return rollback(conn, err);
+
+                                // 7️⃣ Insert platform ledger
+                                conn.query(
+                                  `
+                                  INSERT INTO platform_ledger
+                                  (entry_type, direction, amount, reference)
+                                  VALUES ('FEE', 'CREDIT', ?, ?)
+                                  `,
+                                  [fee, reference],
+                                  err => {
+                                    if (err) return rollback(conn, err);
+
+                                    conn.commit(() => {
+                                      conn.release();
+                                      console.log("✅ User & platform credited:", reference);
+                                    });
+                                  }
+                                );
+                              }
+                            );
+                          }
+                        );
                       }
                     );
                   }

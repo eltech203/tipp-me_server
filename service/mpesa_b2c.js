@@ -70,13 +70,13 @@ router.post("/withdraw", access, (req, res) => {
 
   // 1️⃣ Check wallet balance
   db.query(
-    `SELECT available_balance FROM wallets WHERE user_id = ?`,
+    `SELECT pending_balance FROM wallets WHERE user_id = ?`,
     [user_id],
     (err, rows) => {
       if (err || !rows.length)
         return res.status(400).json({ message: "Wallet not found" });
 
-      const balance = Number(rows[0].available_balance || 0);
+      const balance = Number(rows[0].pending_balance || 0);
       if (balance < amount)
         return res.status(400).json({ message: "Insufficient balance" });
 

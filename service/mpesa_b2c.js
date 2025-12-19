@@ -149,51 +149,78 @@ router.post("/b2c-callback", (req, res) => {
   console.log("📩 B2C CALLBACK");
   console.log(JSON.stringify(req.body, null, 2));
 
+  // ALWAYS ACK MPESA
   res.json({ ResultCode: 0, ResultDesc: "Accepted" });
 
   try {
     const result = req.body?.Result;
-    if (!result) return;
-
-    const remarks = result.ResultParameters.ResultParameter
-      .find(p => p.Key === "TransactionRemarks")?.Value;
-
-    const mpesaRef = result.TransactionID;
-    const amount = Number(
-      result.ResultParameters.ResultParameter
-        .find(p => p.Key === "TransactionAmount")?.Value
-    );
-
-    const withdrawalId = remarks?.replace("WD-", "");
-    if (!withdrawalId) return;
-
-    // ❌ FAILED
-    if (result.ResultCode !== 0) {
-      db.query(
-        `UPDATE withdrawals SET status = 'FAILED' WHERE id = ?`,
-        [withdrawalId]
-      );
+    if (!result) {
+      console.warn("⚠️ No Result object");
       return;
     }
 
-    // ✅ SUCCESS
+    const resultCode = result.ResultCode;
+    const transactionId = result.TransactionID || null;
+
+    // ❌ FAILURE OR TIMEOUT
+    if (resultCode !== 0) {
+      console.warn("❌ B2C FAILED:", result.ResultDesc);
+
+      // Try extract withdrawal reference if available
+      const reference =
+        result?.ReferenceData?.ReferenceItem?.Value || null;
+
+      if (reference?.startsWith("WD-")) {
+        const withdrawalId = reference.replace("WD-", "");
+
+        db.query(
+          `UPDATE withdrawals SET status = 'FAILED' WHERE id = ?`,
+          [withdrawalId]
+        );
+      }
+
+      return;
+    }
+
+    // ✅ SUCCESS PATH
+    const params = result?.ResultParameters?.ResultParameter;
+    if (!Array.isArray(params)) {
+      console.error("❌ Missing ResultParameters");
+      return;
+    }
+
+    const getParam = (key) =>
+      params.find(p => p.Key === key)?.Value;
+
+    const amount = Number(getParam("TransactionAmount"));
+    const receipt = getParam("TransactionReceipt");
+    const remarks = getParam("TransactionRemarks"); // WD-XX
+
+    if (!remarks || !remarks.startsWith("WD-")) {
+      console.error("❌ Missing withdrawal reference");
+      return;
+    }
+
+    const withdrawalId = remarks.replace("WD-", "");
+
+    // 🔎 Load withdrawal
     db.query(
       `SELECT * FROM withdrawals WHERE id = ?`,
       [withdrawalId],
       (err, rows) => {
-        if (!rows.length) return;
+        if (err || !rows.length) return;
 
         const wd = rows[0];
 
-        // 1️⃣ Update withdrawal
+        // 1️⃣ Mark withdrawal completed
         db.query(
           `UPDATE withdrawals
            SET status = 'COMPLETED', mpesa_ref = ?
            WHERE id = ?`,
-          [mpesaRef, withdrawalId]
+          [receipt, withdrawalId]
         );
 
-        // 2️⃣ Update wallet
+        // 2️⃣ Debit wallet
         db.query(
           `UPDATE wallets
            SET available_balance = available_balance - ?
@@ -201,21 +228,19 @@ router.post("/b2c-callback", (req, res) => {
           [amount, wd.user_id]
         );
 
-        // 3️⃣ Wallet ledger
+        // 3️⃣ Ledger entry
         db.query(
           `INSERT INTO wallet_ledger
-           (user_id, uid, entry_type, direction, gross_amount, net_amount, balance_after, reference)
-           VALUES (?, ?, 'WITHDRAWAL', 'DEBIT', ?, ?, 
-             (SELECT available_balance FROM wallets WHERE user_id = ?),
-             ?)`,
-          [wd.user_id, wd.uid, amount, amount, wd.user_id, mpesaRef]
+           (user_id, uid, entry_type, direction, gross_amount, net_amount, reference)
+           VALUES (?, ?, 'WITHDRAWAL', 'DEBIT', ?, ?, ?)`,
+          [wd.user_id, wd.uid, amount, amount, receipt]
         );
 
-        console.log("✅ Withdrawal completed:", mpesaRef);
+        console.log("✅ Withdrawal successful:", receipt);
       }
     );
   } catch (err) {
-    console.error("❌ B2C CALLBACK ERROR:", err);
+    console.error("❌ B2C CALLBACK CRASH:", err);
   }
 });
 

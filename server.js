@@ -15,6 +15,7 @@ app.use("/api/user", require("./routes/users.routes"));
 app.use("/api/auth", require("./routes/auth.routes"));
 app.use("/api/profiles", require("./routes/profile.routes"));
 app.use("/api/payments", require("./service/mpesa_stk"));
+app.use("/api/b2c", require("./service/mpesa_b2c"));
 app.use("/api/wallets", require("./routes/wallet.routes"));
 app.use("/api/withdrawals", require("./routes/withdrawal.routes"));
 app.use("/api/admin", require("./routes/admin.routes"));

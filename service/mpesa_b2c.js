@@ -164,12 +164,8 @@ router.post("/b2c-callback", (req, res) => {
       OriginatorConversationID
     } = result;
 
-    // Example: WD-15 → extract ID
-    
-    if (!withdrawalId) {
-      console.error("❌ Missing withdrawalId");
-      return;
-    }
+    console.log("Result Desc",ResultDesc, "Withdrawal id", withdrawalId)
+
 
     // 🔒 START TRANSACTION
     db.getConnection((err, conn) => {
@@ -197,21 +193,8 @@ router.post("/b2c-callback", (req, res) => {
             const amount = Number(wd.amount);
 
             // ❌ FAILURE PATH
-            if (ResultCode !== 0) {
-              conn.query(
-                `UPDATE withdrawals
-                 SET status = 'FAILED', mpesa_ref = ?
-                 WHERE id = ?`,
-                [TransactionID || "FAILED", withdrawalId],
-                err => {
-                  if (err) return rollback(err);
-                  conn.commit(() => conn.release());
-                }
-              );
-              return;
-            }
-
-            // ✅ SUCCESS PATH
+            if (ResultCode === 2040) {
+               // ✅ SUCCESS PATH
 
             // 2️⃣ Update withdrawal
             conn.query(
@@ -282,6 +265,11 @@ router.post("/b2c-callback", (req, res) => {
                 }
               );
             }
+            }else{
+              
+            }
+
+           
           }
         );
       });

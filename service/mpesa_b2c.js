@@ -186,9 +186,9 @@ router.post("/b2c-callback", (req, res) => {
           // 1️⃣ Update withdrawal
           db.query(
             `UPDATE withdrawals
-             SET status = 'FAILED', mpesa_ref = ?
+             SET status = 'COMPLETED', mpesa_ref = ?
              WHERE id = ?`,
-            [TransactionID || "FAILED", withdrawalId]
+            [TransactionID || "COMPLETED", withdrawalId]
           );
 
           // 2️⃣ Ledger (optional audit)

@@ -153,98 +153,116 @@ router.post("/b2c-callback", (req, res) => {
   // ALWAYS ACK MPESA
   res.json({ ResultCode: 0, ResultDesc: "Accepted" });
 
-  try {
-    const result = req.body?.Result;
-    if (!result) {
-      console.warn("⚠️ No Result object");
+  const result = req.body?.Result;
+  if (!result) return;
+
+  const { ResultCode, ResultDesc, TransactionID } = result;
+
+  // ⚠️ YOU MUST DERIVE THIS CORRECTLY
+  // Example if Remarks = WD-12
+
+  if (!withdrawalId) {
+    console.error("❌ withdrawalId missing");
+    return;
+  }
+
+  // 🔐 START TRANSACTION
+  db.getConnection((err, conn) => {
+    if (err) {
+      console.error("❌ DB connection error:", err);
       return;
     }
 
-    const {
-      ResultCode,
-      ResultDesc,
-      TransactionID,
-    } = result;
+    conn.beginTransaction(err => {
+      if (err) {
+        conn.release();
+        console.error("❌ Transaction start failed:", err);
+        return;
+      }
 
+      // 1️⃣ LOAD WITHDRAWAL
+      conn.query(
+        `SELECT * FROM withdrawals WHERE id = ? FOR UPDATE`,
+        [withdrawalId],
+        (err, rows) => {
+          if (err || !rows.length) {
+            return conn.rollback(() => conn.release());
+          }
 
-    // 🔎 Load withdrawal
-    db.query(
-      `SELECT * FROM withdrawals WHERE id = ?`,
-      [withdrawalId],
-      (err, rows) => {
-        if (err || !rows.length) {
-          console.error("❌ Withdrawal not found:", withdrawalId);
-          return;
-        }
+          const wd = rows[0];
+          const amount = Number(wd.amount);
 
-        const wd = rows[0];
+          // ❌ FAILURE PATH
+          if (ResultCode !== 0) {
+            conn.query(
+              `UPDATE withdrawals
+               SET status = 'FAILED', mpesa_ref = ?
+               WHERE id = ?`,
+              [TransactionID || "FAILED", withdrawalId],
+              () => {
+                conn.commit(() => conn.release());
+              }
+            );
+            return;
+          }
 
-        // ❌ FAILURE PATH
-        if (ResultCode !== 2040) {
-          console.warn("❌ B2C FAILED:", ResultDesc);
-
-          // 1️⃣ Update withdrawal
-          db.query(
+          // ✅ SUCCESS PATH
+          // 2️⃣ UPDATE WITHDRAWAL
+          conn.query(
             `UPDATE withdrawals
              SET status = 'COMPLETED', mpesa_ref = ?
              WHERE id = ?`,
-            [TransactionID || "COMPLETED", withdrawalId]
-          );
+            [TransactionID, withdrawalId],
+            (err) => {
+              if (err) return conn.rollback(() => conn.release());
 
-          // 2️⃣ Ledger (optional audit)
-          db.query(
-            `INSERT INTO wallet_ledger
-             (user_id, uid, entry_type, direction, gross_amount, net_amount, reference)
-             VALUES (?, ?, 'WITHDRAWAL_COMPLETED', 'DEBIT', ?, ?, ?)`,
-            [
-              wd.user_id,
-              wd.uid,
-              wd.amount,
-              0,
-              TransactionID || "FAILED"
-            ]
-          );
+              // 3️⃣ DEBIT WALLET
+              conn.query(
+                `UPDATE wallets
+                 SET pending_balance = pending_balance - ?
+                 WHERE user_id = ?`,
+                [amount, wd.user_id],
+                (err) => {
+                  if (err) return conn.rollback(() => conn.release());
 
-          return;
+                  // 4️⃣ 🎯 UPDATE PROFILE GOAL
+                  conn.query(
+                    `UPDATE profiles
+                     SET goal_raised = GREATEST(goal_raised - ?, 0)
+                     WHERE user_id = ?`,
+                    [amount, wd.user_id],
+                    (err) => {
+                      if (err) return conn.rollback(() => conn.release());
+
+                      // 5️⃣ WALLET LEDGER
+                      conn.query(
+                        `INSERT INTO wallet_ledger
+                         (user_id, uid, entry_type, direction, gross_amount, net_amount, reference)
+                         VALUES (?, ?, 'WITHDRAWAL', 'DEBIT', ?, ?, ?)`,
+                        [wd.user_id, wd.uid, amount, amount, TransactionID],
+                        (err) => {
+                          if (err) return conn.rollback(() => conn.release());
+
+                          // ✅ COMMIT EVERYTHING
+                          conn.commit(err => {
+                            if (err) {
+                              return conn.rollback(() => conn.release());
+                            }
+                            conn.release();
+                            console.log("✅ Withdrawal fully completed:", TransactionID);
+                          });
+                        }
+                      );
+                    }
+                  );
+                }
+              );
+            }
+          );
         }
-
-        // ✅ SUCCESS PATH (REAL PAYOUT)
-    
-
-        const amount = wd.amount;
-        const receipt = TransactionID;
-
-        // 1️⃣ Update withdrawal
-        db.query(
-          `UPDATE withdrawals
-           SET status = 'COMPLETED', mpesa_ref = ?
-           WHERE id = ?`,
-          [receipt, withdrawalId]
-        );
-
-        // 2️⃣ Debit wallet
-        db.query(
-          `UPDATE wallets
-           SET pending_balance = pending_balance - ?
-           WHERE user_id = ?`,
-          [amount, wd.user_id]
-        );
-
-        // 3️⃣ Wallet ledger
-        db.query(
-          `INSERT INTO wallet_ledger
-           (user_id, uid, entry_type, direction, gross_amount, net_amount, reference)
-           VALUES (?, ?, 'WITHDRAWAL', 'DEBIT', ?, ?, ?)`,
-          [wd.user_id, wd.uid, amount, amount, receipt]
-        );
-
-        console.log("✅ Withdrawal completed:", receipt);
-        
-      }
-    );
-  } catch (err) {
-    console.error("❌ B2C CALLBACK CRASH:", err);
-  }
+      );
+    });
+  });
 });
 
 

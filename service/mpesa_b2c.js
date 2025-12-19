@@ -176,43 +176,13 @@ router.post("/b2c-callback", (req, res) => {
           console.error("❌ Withdrawal not found:", withdrawalId);
           return;
         }
-
         const wd = rows[0];
-
-        // ❌ FAILURE PATH
-        if (ResultCode !== 0) {
-          console.warn("❌ B2C FAILED:", ResultDesc);
-
-          // 1️⃣ Update withdrawal
-          db.query(
-            `UPDATE withdrawals
-             SET status = 'COMPLETED', mpesa_ref = ?
-             WHERE id = ?`,
-            [TransactionID || "COMPLETED", withdrawalId]
-          );
-
-          // 2️⃣ Ledger (optional audit)
-          db.query(
-            `INSERT INTO wallet_ledger
-             (user_id, uid, entry_type, direction, gross_amount, net_amount, reference)
-             VALUES (?, ?, 'WITHDRAWAL_FAILED', 'DEBIT', ?, ?, ?)`,
-            [
-              wd.user_id,
-              wd.uid,
-              wd.amount,
-              0,
-              TransactionID || "FAILED"
-            ]
-          );
-
-          return;
-        }
+    
+        if(TransactionID !=null){
 
         // ✅ SUCCESS PATH (REAL PAYOUT)
-        const params = result?.ResultParameters?.ResultParameter || [];
-        const getParam = (k) => params.find(p => p.Key === k)?.Value;
-
-        const amount =  wd.amount;
+        
+        const amount = wd.amount;
         const receipt =  TransactionID;
 
         // 1️⃣ Update withdrawal
@@ -226,7 +196,7 @@ router.post("/b2c-callback", (req, res) => {
         // 2️⃣ Debit wallet
         db.query(
           `UPDATE wallets
-           SET pending_balance = pending_balance - ?
+           SET available_balance = available_balance - ?
            WHERE user_id = ?`,
           [amount, wd.user_id]
         );
@@ -240,6 +210,8 @@ router.post("/b2c-callback", (req, res) => {
         );
 
         console.log("✅ Withdrawal completed:", receipt);
+        }
+
       }
     );
   } catch (err) {

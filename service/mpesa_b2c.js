@@ -35,7 +35,7 @@ const consumer_key = process.env.MPESA_CONSUMER_KEY;
 const consumer_secret = process.env.MPESA_CONSUMER_SECRET;
 const auth = Buffer.from(`${consumer_key}:${consumer_secret}`).toString("base64");
 
-function accessToken(req, res, next) {
+function access(req, res, next) {
   request(
     {
       url: "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",

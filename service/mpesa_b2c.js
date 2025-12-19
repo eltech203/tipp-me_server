@@ -223,21 +223,12 @@ router.post("/b2c-callback", (req, res) => {
           [receipt, withdrawalId]
         );
 
-        //- Update profile 
-        db.query(
+          db.query(
           `UPDATE profiles
-          SET goal_raised = goal_raised - ? ,
-          WHERE id = ? AND goal_amount IS NOT NULL`,
-          [amount,  wd.user_id],
-          (err, result) => {
-            if (err) {
-              console.error("❌ Goal update failed:", err);
-            } else if (result.affectedRows > 0) {
-              console.log(`🎯 Goal raised updated: +${amount}`);
-            }
-          }
+           SET goal_amount = goal_amount - ?,goal_raised = goal_raised - ?
+           WHERE user_id = ?`,
+          [amount, amount , wd.user_id,]
         );
-
 
         // 2️⃣ Debit wallet
         db.query(

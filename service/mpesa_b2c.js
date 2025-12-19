@@ -240,14 +240,19 @@ router.post("/b2c-callback", (req, res) => {
             // 5️⃣ Wallet ledger
             function insertLedger() {
               conn.query(
+
                 `
                 INSERT INTO wallet_ledger
-                (user_id, uid, entry_type, direction,gross_amount, fee_amount, net_amount,balance_after, reference, status)
-                 VALUES (?, ?, 'WITHDRAWAL_COMPLETED', 'DEBIT', ?, ?, ?, ?, 'COMPLETED')
+                (user_id, uid, entry_type, direction,
+                 gross_amount, fee_amount, net_amount,
+                 balance_after, reference, status)
+                VALUES (?, ?, 'WITHDRAWAL_COMPLETED', 'DEBIT',
+                        ?, ?, ?, ?, ?, 'COMPLETED')
                 `,
                 [
                   wd.user_id,
                   wd.uid,
+                  amount,
                   amount,
                   0,
                   0,

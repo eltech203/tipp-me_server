@@ -61,6 +61,7 @@ const paymentMetaStore = {};
 /* ----------------------------------------------------
    📲 STK PUSH
 ---------------------------------------------------- */
+let withdrawalId;
 router.post("/withdraw", access, (req, res) => {
   const { user_id, uid, amount, phone } = req.body;
 
@@ -91,7 +92,7 @@ router.post("/withdraw", access, (req, res) => {
             return res.status(500).json({ message: "Withdraw init failed" });
           }
 
-          const withdrawalId = result.insertId;
+           withdrawalId = result.insertId;
           const remarks = `WD-${withdrawalId}`;
 
           // 3️⃣ Call MPESA B2C
@@ -159,60 +160,71 @@ router.post("/b2c-callback", (req, res) => {
       return;
     }
 
-    const resultCode = result.ResultCode;
-    const transactionId = result.TransactionID || null;
+    const {
+      ResultCode,
+      ResultDesc,
+      TransactionID,
+      ReferenceData
+    } = result;
 
-    // ❌ FAILURE OR TIMEOUT
-    if (resultCode !== 0) {
-      console.warn("❌ B2C FAILED:", result.ResultDesc);
+    const reference =
+      ReferenceData?.ReferenceItem?.Value || null; // WD-XX
 
-      // Try extract withdrawal reference if available
-      const reference =
-        result?.ReferenceData?.ReferenceItem?.Value || null;
-
-      if (reference?.startsWith("WD-")) {
-        const withdrawalId = reference.replace("WD-", "");
-
-        db.query(
-          `UPDATE withdrawals SET status = 'FAILED' WHERE id = ?`,
-          [withdrawalId]
-        );
-      }
-
+    if (!reference || !reference.startsWith("WD-")) {
+      console.warn("⚠️ Missing withdrawal reference");
       return;
     }
 
-    // ✅ SUCCESS PATH
-    const params = result?.ResultParameters?.ResultParameter;
-    if (!Array.isArray(params)) {
-      console.error("❌ Missing ResultParameters");
-      return;
-    }
-
-    const getParam = (key) =>
-      params.find(p => p.Key === key)?.Value;
-
-    const amount = Number(getParam("TransactionAmount"));
-    const receipt = getParam("TransactionReceipt");
-    const remarks = getParam("TransactionRemarks"); // WD-XX
-
-    if (!remarks || !remarks.startsWith("WD-")) {
-      console.error("❌ Missing withdrawal reference");
-      return;
-    }
-
-    const withdrawalId = remarks.replace("WD-", "");
 
     // 🔎 Load withdrawal
     db.query(
       `SELECT * FROM withdrawals WHERE id = ?`,
       [withdrawalId],
       (err, rows) => {
-        if (err || !rows.length) return;
+        if (err || !rows.length) {
+          console.error("❌ Withdrawal not found:", withdrawalId);
+          return;
+        }
 
         const wd = rows[0];
 
-        // 1️⃣ Mark withdrawal completed
+        // ❌ FAILURE PATH
+        if (ResultCode !== 0) {
+          console.warn("❌ B2C FAILED:", ResultDesc);
+
+          // 1️⃣ Update withdrawal
+          db.query(
+            `UPDATE withdrawals
+             SET status = 'FAILED', mpesa_ref = ?
+             WHERE id = ?`,
+            [TransactionID || "FAILED", withdrawalId]
+          );
+
+          // 2️⃣ Ledger (optional audit)
+          db.query(
+            `INSERT INTO wallet_ledger
+             (user_id, uid, entry_type, direction, gross_amount, net_amount, reference)
+             VALUES (?, ?, 'WITHDRAWAL_FAILED', 'DEBIT', ?, ?, ?)`,
+            [
+              wd.user_id,
+              wd.uid,
+              wd.amount,
+              0,
+              TransactionID || "FAILED"
+            ]
+          );
+
+          return;
+        }
+
+        // ✅ SUCCESS PATH (REAL PAYOUT)
+        const params = result?.ResultParameters?.ResultParameter || [];
+        const getParam = (k) => params.find(p => p.Key === k)?.Value;
+
+        const amount = Number(getParam("TransactionAmount")) || wd.amount;
+        const receipt = getParam("TransactionReceipt") || TransactionID;
+
+        // 1️⃣ Update withdrawal
         db.query(
           `UPDATE withdrawals
            SET status = 'COMPLETED', mpesa_ref = ?
@@ -228,7 +240,7 @@ router.post("/b2c-callback", (req, res) => {
           [amount, wd.user_id]
         );
 
-        // 3️⃣ Ledger entry
+        // 3️⃣ Wallet ledger
         db.query(
           `INSERT INTO wallet_ledger
            (user_id, uid, entry_type, direction, gross_amount, net_amount, reference)
@@ -236,13 +248,14 @@ router.post("/b2c-callback", (req, res) => {
           [wd.user_id, wd.uid, amount, amount, receipt]
         );
 
-        console.log("✅ Withdrawal successful:", receipt);
+        console.log("✅ Withdrawal completed:", receipt);
       }
     );
   } catch (err) {
     console.error("❌ B2C CALLBACK CRASH:", err);
   }
 });
+
 
 
 module.exports = router;

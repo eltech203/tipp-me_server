@@ -195,7 +195,7 @@ router.post("/b2c-callback", (req, res) => {
           db.query(
             `INSERT INTO wallet_ledger
              (user_id, uid, entry_type, direction, gross_amount, net_amount, reference)
-             VALUES (?, ?, 'WITHDRAWAL_FAILED', 'DEBIT', ?, ?, ?)`,
+             VALUES (?, ?, 'WITHDRAWAL_COMPLETED', 'DEBIT', ?, ?, ?)`,
             [
               wd.user_id,
               wd.uid,
@@ -225,9 +225,9 @@ router.post("/b2c-callback", (req, res) => {
 
           db.query(
           `UPDATE profiles
-           SET goal_amount = goal_amount - ?,goal_raised = goal_raised - ?
+           SET goal_raised = goal_raised - ?
            WHERE user_id = ?`,
-          [amount, amount , wd.user_id,]
+          [amount , wd.user_id,]
         );
 
         // 2️⃣ Debit wallet

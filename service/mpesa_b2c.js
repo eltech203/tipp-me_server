@@ -219,38 +219,5 @@ router.post("/b2c-callback", (req, res) => {
   }
 });
 
-/* ----------------------------------------------------
-   🔎 STK QUERY
----------------------------------------------------- */
-router.post("/stk-push/query", accessToken, (req, res) => {
-  const { checkoutRequestId } = req.body;
-
-  const shortCode = "174379";
-  const passKey =
-    "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919";
-
-  const timestamp = new Date().toISOString().replace(/[^0-9]/g, "").slice(0, -3);
-  const password = Buffer.from(`${shortCode}${passKey}${timestamp}`).toString(
-    "base64"
-  );
-
-  request(
-    {
-      url: "https://sandbox.safaricom.co.ke/mpesa/stkpushquery/v1/query",
-      method: "POST",
-      headers: { Authorization: `Bearer ${req.access_token}` },
-      json: {
-        BusinessShortCode: shortCode,
-        Password: password,
-        Timestamp: timestamp,
-        CheckoutRequestID: checkoutRequestId,
-      },
-    },
-    (err, response, body) => {
-      if (err) return res.status(500).json(err);
-      res.status(200).json(body);
-    }
-  );
-});
 
 module.exports = router;

@@ -253,7 +253,7 @@ router.post("/b2c-callback", (req, res) => {
                   wd.user_id,
                   wd.uid,
                   amount,
-                  amount,
+                  0,
                   0,
                   0,
                   TransactionID

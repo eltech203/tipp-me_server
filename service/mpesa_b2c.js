@@ -222,11 +222,10 @@ router.post("/b2c-callback", (req, res) => {
           [receipt, withdrawalId]
         );
 
-       
         // 2️⃣ Debit wallet
         db.query(
           `UPDATE wallets
-           SET available_balance = available_balance - ?
+           SET pending_balance = pending_balance - ?
            WHERE user_id = ?`,
           [amount, wd.user_id]
         );
@@ -239,16 +238,8 @@ router.post("/b2c-callback", (req, res) => {
           [wd.user_id, wd.uid, amount, amount, receipt]
         );
 
-        
-        db.query(
-          `UPDATE profiles
-           SET goal_raised = goal_raised - ?
-           WHERE user_id = ?`,
-          [amount , wd.user_id,]
-        );
-
         console.log("✅ Withdrawal completed:", receipt);
-        return;
+        
       }
     );
   } catch (err) {

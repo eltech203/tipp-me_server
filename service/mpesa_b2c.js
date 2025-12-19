@@ -180,7 +180,7 @@ router.post("/b2c-callback", (req, res) => {
         const wd = rows[0];
 
         // ❌ FAILURE PATH
-        if (ResultCode !== 0) {
+        if (ResultCode !== 2040) {
           console.warn("❌ B2C FAILED:", ResultDesc);
 
           // 1️⃣ Update withdrawal

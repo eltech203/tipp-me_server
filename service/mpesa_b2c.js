@@ -221,7 +221,7 @@ router.post("/b2c-callback", (req, res) => {
                       SET goal_raised = GREATEST(goal_raised - ?, 0)
                       WHERE id = ? AND status = 'ACTIVE'
                       `,
-                      [amount, wd.user_id],
+                      [0, wd.user_id],
                       (err, result) => {
                         if (err) return rollback(err);
 

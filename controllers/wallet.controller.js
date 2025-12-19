@@ -62,7 +62,7 @@ exports.getWalletByUid = async (req, res) => {
         total_balance: 0
       };
 
-      await redis.setEx(walletCacheKey(uid), 200, JSON.stringify(newWallet));
+      await redis.setEx(walletCacheKey(uid), 100, JSON.stringify(newWallet));
       return res.status(200).json(newWallet);
     }
 

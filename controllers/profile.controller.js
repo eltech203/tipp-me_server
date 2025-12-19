@@ -77,7 +77,7 @@ exports.getProfileByUid = async (req, res) => {
       return res.status(404).json({ message: "Profile not found" });
     }
 
-    await redisClient.setEx(cacheKey, 600, JSON.stringify(profile));
+    await redisClient.setEx(cacheKey, 200, JSON.stringify(profile));
     res.json(profile);
   } catch (err) {
     console.error("❌ Get profile by uid error:", err);
@@ -105,7 +105,7 @@ exports.getProfileByUsername = async (req, res) => {
       return res.status(404).json({ message: "Profile not found" });
     }
 
-    await redisClient.setEx(cacheKey, 600, JSON.stringify(profile));
+    await redisClient.setEx(cacheKey, 200, JSON.stringify(profile));
     res.json(profile);
   } catch (err) {
     console.error("❌ Get profile by username error:", err);

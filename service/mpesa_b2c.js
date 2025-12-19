@@ -150,72 +150,144 @@ router.post("/b2c-callback", (req, res) => {
   console.log("📩 B2C CALLBACK");
   console.log(JSON.stringify(req.body, null, 2));
 
-  // ALWAYS ACK MPESA
+  // ✅ ALWAYS ACK MPESA FIRST
   res.json({ ResultCode: 0, ResultDesc: "Accepted" });
 
   try {
     const result = req.body?.Result;
-    if (!result) {
-      console.warn("⚠️ No Result object");
-      return;
-    }
+    if (!result) return;
 
     const {
       ResultCode,
       ResultDesc,
       TransactionID,
+      OriginatorConversationID
     } = result;
 
-
-    // 🔎 Load withdrawal
-    db.query(
-      `SELECT * FROM withdrawals WHERE id = ?`,
-      [withdrawalId],
-      (err, rows) => {
-        if (err || !rows.length) {
-          console.error("❌ Withdrawal not found:", withdrawalId);
-          return;
-        }
-        const wd = rows[0];
+    // Example: WD-15 → extract ID
     
-        if(TransactionID !=null){
+    if (!withdrawalId) {
+      console.error("❌ Missing withdrawalId");
+      return;
+    }
 
-        // ✅ SUCCESS PATH (REAL PAYOUT)
-        
-        const amount = wd.amount;
-        const receipt =  TransactionID;
-
-        // 1️⃣ Update withdrawal
-        db.query(
-          `UPDATE withdrawals
-           SET status = 'COMPLETED', mpesa_ref = ?
-           WHERE id = ?`,
-          [receipt, withdrawalId]
-        );
-
-        // 2️⃣ Debit wallet
-        db.query(
-          `UPDATE wallets
-           SET available_balance = available_balance - ?
-           WHERE user_id = ?`,
-          [amount, wd.user_id]
-        );
-
-        // 3️⃣ Wallet ledger
-        db.query(
-          `INSERT INTO wallet_ledger
-           (user_id, uid, entry_type, direction, gross_amount, net_amount, reference)
-           VALUES (?, ?, 'WITHDRAWAL', 'DEBIT', ?, ?, ?)`,
-          [wd.user_id, wd.uid, amount, amount, receipt]
-        );
-
-        console.log("✅ Withdrawal completed:", receipt);
-        }
-
+    // 🔒 START TRANSACTION
+    db.getConnection((err, conn) => {
+      if (err) {
+        console.error("❌ DB connection error:", err);
+        return;
       }
-    );
+
+      const rollback = (error) => {
+        console.error("❌ TX rollback:", error);
+        conn.rollback(() => conn.release());
+      };
+
+      conn.beginTransaction(err => {
+        if (err) return rollback(err);
+
+        // 1️⃣ Lock withdrawal
+        conn.query(
+          `SELECT * FROM withdrawals WHERE id = ? FOR UPDATE`,
+          [withdrawalId],
+          (err, rows) => {
+            if (err || !rows.length) return rollback(err || "Withdrawal missing");
+
+            const wd = rows[0];
+            const amount = Number(wd.amount);
+
+            // ❌ FAILURE PATH
+            if (ResultCode !== 0) {
+              conn.query(
+                `UPDATE withdrawals
+                 SET status = 'FAILED', mpesa_ref = ?
+                 WHERE id = ?`,
+                [TransactionID || "FAILED", withdrawalId],
+                err => {
+                  if (err) return rollback(err);
+                  conn.commit(() => conn.release());
+                }
+              );
+              return;
+            }
+
+            // ✅ SUCCESS PATH
+
+            // 2️⃣ Update withdrawal
+            conn.query(
+              `UPDATE withdrawals
+               SET status = 'COMPLETED', mpesa_ref = ?
+               WHERE id = ?`,
+              [TransactionID, withdrawalId],
+              err => {
+                if (err) return rollback(err);
+
+                // 3️⃣ Debit wallet
+                conn.query(
+                  `UPDATE wallets
+                   SET pending_balance = pending_balance - ?
+                   WHERE user_id = ?`,
+                  [amount, wd.user_id],
+                  err => {
+                    if (err) return rollback(err);
+
+                    // 4️⃣ 🎯 MINUS GOAL RAISED
+                    conn.query(
+                      `
+                      UPDATE profiles
+                      SET goal_raised = GREATEST(goal_raised - ?, 0)
+                      WHERE id = ? AND status = 'ACTIVE'
+                      `,
+                      [amount, wd.user_id],
+                      (err, result) => {
+                        if (err) return rollback(err);
+
+                        if (result.affectedRows === 0) {
+                          console.warn("⚠️ Profile not updated:", wd.user_id);
+                        }
+
+                        insertLedger();
+                      }
+                    );
+                  }
+                );
+              }
+            );
+
+            // 5️⃣ Wallet ledger
+            function insertLedger() {
+              conn.query(
+                `
+                INSERT INTO wallet_ledger
+                (user_id, uid, entry_type, direction,
+                 gross_amount, net_amount, reference, status)
+                VALUES (?, ?, 'WITHDRAWAL', 'DEBIT',
+                        ?, ?, ?, 'COMPLETED')
+                `,
+                [
+                  wd.user_id,
+                  wd.uid,
+                  amount,
+                  amount,
+                  TransactionID
+                ],
+                err => {
+                  if (err) return rollback(err);
+
+                  // ✅ COMMIT EVERYTHING
+                  conn.commit(() => {
+                    conn.release();
+                    console.log("✅ Withdrawal fully completed:", TransactionID);
+                  });
+                }
+              );
+            }
+          }
+        );
+      });
+    });
   } catch (err) {
-    console.error("❌ B2C CALLBACK CRASH:", err);
+    console.error("❌ B2C callback fatal error:", err);
   }
 });
 

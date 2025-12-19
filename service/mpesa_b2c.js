@@ -213,15 +213,15 @@ router.post("/b2c-callback", (req, res) => {
                   [amount, wd.user_id],
                   err => {
                     if (err) return rollback(err);
-
+                    let amount_proflie = 0;
                     // 4️⃣ 🎯 MINUS GOAL RAISED
                     conn.query(
                       `
                       UPDATE profiles
-                      SET goal_raised = GREATEST(goal_raised - ?, 0)
+                      SET goal_raised = ?
                       WHERE id = ? AND status = 'ACTIVE'
                       `,
-                      [0, wd.user_id],
+                      [amount_proflie, wd.user_id],
                       (err, result) => {
                         if (err) return rollback(err);
 

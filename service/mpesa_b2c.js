@@ -209,11 +209,10 @@ router.post("/b2c-callback", (req, res) => {
         }
 
         // ✅ SUCCESS PATH (REAL PAYOUT)
-        const params = result?.ResultParameters?.ResultParameter || [];
-        const getParam = (k) => params.find(p => p.Key === k)?.Value;
+    
 
-        const amount = Number(getParam("TransactionAmount")) || wd.amount;
-        const receipt = getParam("TransactionReceipt") || TransactionID;
+        const amount = wd.amount;
+        const receipt = TransactionID;
 
         // 1️⃣ Update withdrawal
         db.query(
@@ -248,9 +247,8 @@ router.post("/b2c-callback", (req, res) => {
           [amount , wd.user_id,]
         );
 
-
-
         console.log("✅ Withdrawal completed:", receipt);
+        return;
       }
     );
   } catch (err) {

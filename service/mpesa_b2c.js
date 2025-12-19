@@ -164,16 +164,7 @@ router.post("/b2c-callback", (req, res) => {
       ResultCode,
       ResultDesc,
       TransactionID,
-      ReferenceData
     } = result;
-
-    const reference =
-      ReferenceData?.ReferenceItem?.Value || null; // WD-XX
-
-    if (!reference || !reference.startsWith("WD-")) {
-      console.warn("⚠️ Missing withdrawal reference");
-      return;
-    }
 
 
     // 🔎 Load withdrawal

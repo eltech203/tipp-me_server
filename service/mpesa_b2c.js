@@ -108,7 +108,7 @@ router.post("/withdraw", access, (req, res) => {
               json: {
                 InitiatorName: process.env.MPESA_INITIATOR,
                 SecurityCredential: process.env.MPESA_SECURITY_CREDENTIAL,
-                CommandID: "BusinessPayment",
+                CommandID: "SalaryPayment",
                 Amount: amount,
                 PartyA: "600983",
                 PartyB: phone,

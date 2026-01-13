@@ -144,7 +144,7 @@ exports.getBalance = async (req, res) => {
           const balance = Number(rows[0].balance);
 
           // 4️⃣ Cache (safe)
-          await redis.setEx(cacheKey, 30, balance);
+          await redis.setEx(cacheKey, 100, balance);
 
           res.json({ balance });
         }

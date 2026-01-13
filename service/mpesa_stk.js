@@ -99,7 +99,7 @@ router.post("/stk-push", accessToken, (req, res) => {
         PartyB: shortCode,
         PhoneNumber: phone,
         CallBackURL:
-          "https://tipp-meserver-production.up.railway.app/api/payments/callback",
+          "https://tipp-meserver-production-5b51.up.railway.app/api/payments/callback",
         AccountReference: reference,
         TransactionDesc: "Tip Payment",
       },

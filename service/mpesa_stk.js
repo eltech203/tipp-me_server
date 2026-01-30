@@ -249,11 +249,6 @@ router.post("/callback", (req, res) => {
                     [amount, profile_id],
                     (err, result) => {
                     if (err) return rollback(err);
-
-                    if (result.affectedRows === 0) {
-                        console.warn("⚠️ Profile not found or inactive:", profile_id);
-                    }
-
                     creditPlatform(); // continue flow
                     }
                 );

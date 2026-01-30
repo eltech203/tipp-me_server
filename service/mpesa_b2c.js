@@ -150,7 +150,7 @@ router.post("/b2c-callback", (req, res) => {
   console.log("📩 B2C CALLBACK");
   console.log(JSON.stringify(req.body, null, 2));
 
-  // ✅ ALWAYS ACK MPESA FIRST
+  // ✅ ALWAYS ACK
   res.json({ ResultCode: 0, ResultDesc: "Accepted" });
 
   try {
@@ -159,23 +159,24 @@ router.post("/b2c-callback", (req, res) => {
 
     const {
       ResultCode,
-      ResultDesc,
       TransactionID,
-      OriginatorConversationID
+      OriginatorConversationID,
+      ResultDesc,
     } = result;
 
-    console.log("Result Desc",ResultDesc, "Withdrawal id", withdrawalId)
+    // 🔍 Extract withdrawalId from Remarks / OriginatorConversationID
+    const match = OriginatorConversationID?.match(/WD-(\d+)/);
+    if (!match) {
+      console.error("❌ Withdrawal ID missing in callback");
+      return;
+    }
 
 
-    // 🔒 START TRANSACTION
     db.getConnection((err, conn) => {
-      if (err) {
-        console.error("❌ DB connection error:", err);
-        return;
-      }
+      if (err) return console.error("❌ DB error", err);
 
-      const rollback = (error) => {
-        console.error("❌ TX rollback:", error);
+      const rollback = (e) => {
+        console.error("❌ TX rollback:", e);
         conn.rollback(() => conn.release());
       };
 
@@ -187,15 +188,28 @@ router.post("/b2c-callback", (req, res) => {
           `SELECT * FROM withdrawals WHERE id = ? FOR UPDATE`,
           [withdrawalId],
           (err, rows) => {
-            if (err || !rows.length) return rollback(err || "Withdrawal missing");
+            if (err || !rows.length)
+              return rollback("Withdrawal not found");
 
             const wd = rows[0];
             const amount = Number(wd.amount);
 
-            // ❌ FAILURE PATH
-            if (ResultCode === 2040) {
-               // ✅ SUCCESS PATH
+            // ❌ FAILURE
+            if (ResultCode !== 0) {
+              conn.query(
+                `UPDATE withdrawals
+                 SET status = 'FAILED', mpesa_ref = ?
+                 WHERE id = ?`,
+                [TransactionID || ResultDesc, withdrawalId],
+                err => {
+                  if (err) return rollback(err);
+                  conn.commit(() => conn.release());
+                }
+              );
+              return;
+            }
 
+            // ✅ SUCCESS
             // 2️⃣ Update withdrawal
             conn.query(
               `UPDATE withdrawals
@@ -205,81 +219,63 @@ router.post("/b2c-callback", (req, res) => {
               err => {
                 if (err) return rollback(err);
 
-                // 3️⃣ Debit wallet
+                // 3️⃣ Debit AVAILABLE balance
                 conn.query(
                   `UPDATE wallets
-                   SET pending_balance = pending_balance - ?
-                   WHERE user_id = ?`,
-                  [amount, wd.user_id],
+                   SET available_balance = available_balance - ?
+                   WHERE user_id = ? AND available_balance >= ?`,
+                  [amount, wd.user_id, amount],
                   err => {
                     if (err) return rollback(err);
-                    let amount_proflie = 0;
-                    // 4️⃣ 🎯 MINUS GOAL RAISED
+
+                    // 4️⃣ 🎯 Reduce goal_raised
                     conn.query(
                       `
                       UPDATE profiles
-                      SET goal_raised = ?
+                      SET goal_raised = GREATEST(goal_raised - ?, 0)
                       WHERE id = ? AND status = 'ACTIVE'
                       `,
-                      [amount_proflie, wd.user_id],
-                      (err, result) => {
+                      [amount, wd.user_id],
+                      err => {
                         if (err) return rollback(err);
 
-                        if (result.affectedRows === 0) {
-                          console.warn("⚠️ Profile not updated:", wd.user_id);
-                        }
+                        // 5️⃣ Ledger
+                        conn.query(
+                          `
+                          INSERT INTO wallet_ledger
+                          (user_id, uid, entry_type, direction,
+                           gross_amount, net_amount, reference, status)
+                          VALUES (?, ?, 'WITHDRAWAL', 'DEBIT',
+                                  ?, ?, ?, 'COMPLETED')
+                          `,
+                          [
+                            wd.user_id,
+                            wd.uid,
+                            amount,
+                            amount,
+                            TransactionID
+                          ],
+                          err => {
+                            if (err) return rollback(err);
 
-                        insertLedger();
+                            conn.commit(() => {
+                              conn.release();
+                              console.log("✅ Withdrawal completed:", TransactionID);
+                            });
+                          }
+                        );
                       }
                     );
                   }
                 );
               }
             );
-
-            // 5️⃣ Wallet ledger
-            function insertLedger() {
-              conn.query(
-
-                `
-                INSERT INTO wallet_ledger
-                (user_id, uid, entry_type, direction,
-                 gross_amount, fee_amount, net_amount,
-                 balance_after, reference, status)
-                VALUES (?, ?, 'WITHDRAWAL_COMPLETED', 'DEBIT',
-                        ?, ?, ?, ?, ?, 'COMPLETED')
-                `,
-                [
-                  wd.user_id,
-                  wd.uid,
-                  amount,
-                  0,
-                  0,
-                  0,
-                  TransactionID
-                ],
-                err => {
-                  if (err) return rollback(err);
-
-                  // ✅ COMMIT EVERYTHING
-                  conn.commit(() => {
-                    conn.release();
-                    console.log("✅ Withdrawal fully completed:", TransactionID);
-                  });
-                }
-              );
-            }
-            }else{
-              
-            }
-
-           
           }
         );
       });
     });
   } catch (err) {
-    console.error("❌ B2C callback fatal error:", err);
+    console.error("❌ B2C CALLBACK CRASH:", err);
   }
 });
 

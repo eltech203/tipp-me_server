@@ -14,7 +14,7 @@ const walletCacheKey = (uid) => `wallet:${uid}`;
  */
 const releaseFundsIfGoalReached = async (profile_id) => {
   const conn = await getConnection();
-
+ console.log("🚀 Releasing funds for profile:", profile_id);
   try {
     await util.promisify(conn.beginTransaction).bind(conn)();
 

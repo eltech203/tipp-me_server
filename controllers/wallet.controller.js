@@ -112,7 +112,7 @@ exports.getBalance = async (req, res) => {
       return res.status(404).json({ message: "Wallet not found" });
     }
 
-    await releaseFundsIfGoalReached(uid);
+    // await releaseFundsIfGoalReached(uid);
     const total =
       Number(wallet.available_balance) +
       Number(wallet.pending_balance) +
@@ -183,7 +183,7 @@ exports.getWalletByUid = async (req, res) => {
     }
 
     // 🔓 AUTO RELEASE FUNDS IF GOAL HIT
-    await releaseFundsIfGoalReached(wallet.user_id);
+    await releaseFundsIfGoalReached(uid);
 
     // 🔄 Reload wallet after release
     const [updatedWallet] = await query(

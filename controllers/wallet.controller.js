@@ -183,7 +183,7 @@ exports.getWalletByUid = async (req, res) => {
     }
 
     // 🔓 AUTO RELEASE FUNDS IF GOAL HIT
-    await releaseFundsIfGoalReached(uid);
+    await releaseFundsIfGoalReached(wallet.user_id);
 
     // 🔄 Reload wallet after release
     const [updatedWallet] = await query(

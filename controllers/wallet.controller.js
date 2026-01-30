@@ -9,6 +9,42 @@ const getConnection = util.promisify(db.getConnection).bind(db);
 
 const walletCacheKey = (uid) => `wallet:${uid}`;
 
+exports.getBalance = async (req, res) => {
+  const { uid } = req.params;
+
+  try {
+    const [wallet] = await query(
+      `
+      SELECT 
+        available_balance,
+        pending_balance,
+        locked_balance
+      FROM wallets
+      WHERE uid = ?
+      `,
+      [uid]
+    );
+
+    if (!wallet) {
+      return res.status(404).json({ message: "Wallet not found" });
+    }
+
+    const total =
+      Number(wallet.available_balance) +
+      Number(wallet.pending_balance) +
+      Number(wallet.locked_balance);
+
+    res.json({
+      available_balance: Number(wallet.available_balance),
+      pending_balance: Number(wallet.pending_balance),
+      locked_balance: Number(wallet.locked_balance),
+      total_balance: total,
+    });
+  } catch (err) {
+    console.error("❌ Get balance error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
 /**
  * 🔓 Auto-release pending balance when goal is reached
  */

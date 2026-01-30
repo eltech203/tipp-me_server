@@ -19,25 +19,25 @@ const releaseFundsIfGoalReached = async (profile_id) => {
     await util.promisify(conn.beginTransaction).bind(conn)();
 
     // 1️⃣ Lock profile
-    const [profile] = await util.promisify(conn.query).bind(conn)(
-      `
-      SELECT goal_amount, goal_raised
-      FROM profiles
-      WHERE id = ?
-      FOR UPDATE
-      `,
-      [profile_id]
-    );
+    // const [profile] = await util.promisify(conn.query).bind(conn)(
+    //   `
+    //   SELECT goal_amount, goal_raised
+    //   FROM profiles
+    //   WHERE id = ?
+    //   FOR UPDATE
+    //   `,
+    //   [profile_id]
+    // );
 
-    if (
-      !profile ||
-      profile.goal_amount === null ||
-      Number(profile.goal_raised) < Number(profile.goal_amount)
-    ) {
-      await util.promisify(conn.commit).bind(conn)();
-      conn.release();
-      return;
-    }
+    // if (
+    //   !profile ||
+    //   profile.goal_amount === null ||
+    //   Number(profile.goal_raised) < Number(profile.goal_amount)
+    // ) {
+    //   await util.promisify(conn.commit).bind(conn)();
+    //   conn.release();
+    //   return;
+    // }
 
     // 2️⃣ Lock wallet
     const [wallet] = await util.promisify(conn.query).bind(conn)(

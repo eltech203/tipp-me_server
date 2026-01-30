@@ -12,7 +12,7 @@ const walletCacheKey = (uid) => `wallet:${uid}`;
 /**
  * 🔓 Auto-release pending balance when goal is reached
  */
-const releaseFundsIfGoalReached = async (profile_id) => {
+const releaseFundsIfGoalReached = async (profile_id, uid) => {
   const conn = await getConnection();
  console.log("🚀 Releasing funds for profile:", profile_id);
   try {
@@ -75,10 +75,10 @@ const releaseFundsIfGoalReached = async (profile_id) => {
     await util.promisify(conn.query).bind(conn)(
       `
       INSERT INTO wallet_ledger
-      (user_id, entry_type, direction, gross_amount, net_amount, reference)
-      VALUES (?, 'GOAL_RELEASE', 'CREDIT', ?, ?, 'GOAL_REACHED')
+      (user_id, uid, entry_type, direction, gross_amount, net_amount, reference)
+      VALUES (?, ?, 'GOAL_RELEASE', 'CREDIT', ?, ?, 'GOAL_REACHED')
       `,
-      [profile_id, pending, pending]
+      [profile_id, uid, pending, pending]
     );
 
     await util.promisify(conn.commit).bind(conn)();
@@ -183,7 +183,7 @@ exports.getWalletByUid = async (req, res) => {
     }
 
     // 🔓 AUTO RELEASE FUNDS IF GOAL HIT
-    await releaseFundsIfGoalReached(wallet.user_id);
+    await releaseFundsIfGoalReached(wallet.user_id,uid);
 
     // 🔄 Reload wallet after release
     const [updatedWallet] = await query(

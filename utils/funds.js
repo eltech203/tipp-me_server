@@ -1,7 +1,6 @@
 const db = require("../config/db");
 const redis = require("../config/redis");
 const util = require("util");
-const util = require("util");
 
 const query = util.promisify(db.query).bind(db);
 const getConnection = util.promisify(db.getConnection).bind(db);

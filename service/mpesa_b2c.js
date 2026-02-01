@@ -62,10 +62,8 @@ const paymentMetaStore = {};
    📲 STK PUSH
 ---------------------------------------------------- */
 let withdrawalId;
-let uid;
 router.post("/withdraw", access, (req, res) => {
   const { user_id, uid, amount, phone } = req.body;
-  uid = uid;
 
   if (!user_id || !amount || !phone) {
     return res.status(400).json({ message: "Missing fields" });

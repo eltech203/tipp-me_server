@@ -92,7 +92,7 @@ router.post("/withdraw", access, (req, res) => {
             return res.status(500).json({ message: "Withdraw init failed" });
           }
 
-           withdrawalId = `WD-${Date.now()}-${result.insertId}`;
+           withdrawalId = result.insertId;
           const remarks = `WD-${withdrawalId}`;
 
           // 3️⃣ Call MPESA B2C
@@ -165,11 +165,11 @@ router.post("/b2c-callback", (req, res) => {
     } = result;
 
     // 🔍 Extract withdrawalId from Remarks / OriginatorConversationID
-    const match = OriginatorConversationID?.match(/WD-(\d+)/);
-    if (!match) {
-      console.error("❌ Withdrawal ID missing in callback");
-      return;
-    }
+    // const match = OriginatorConversationID?.match(/WD-(\d+)/);
+    // if (!match) {
+    //   console.error("❌ Withdrawal ID missing in callback");
+    //   return;
+    // }
 
 
     db.getConnection((err, conn) => {

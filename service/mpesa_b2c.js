@@ -77,9 +77,9 @@ router.post("/withdraw", access, (req, res) => {
       if (err || !rows.length)
         return res.status(400).json({ message: "Wallet not found" });
 
-      const balance = Number(rows[0].pending_balance || 0);
+      const balance = Number(rows[0].available_balance || 0);
       if (balance < amount)
-        return res.status(400).json({ message: "Insufficient balance" });
+        return res.status(205).json({ message: "Insufficient balance" });
 
       // 2️⃣ Create withdrawal record
       db.query(

@@ -92,7 +92,7 @@ router.post("/withdraw", access, (req, res) => {
             return res.status(500).json({ message: "Withdraw init failed" });
           }
 
-           withdrawalId = result.insertId;
+           withdrawalId = `WD-${Date.now()}-${result.insertId}`;
           const remarks = `WD-${withdrawalId}`;
 
           // 3️⃣ Call MPESA B2C

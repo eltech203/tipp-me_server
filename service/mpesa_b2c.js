@@ -245,15 +245,16 @@ router.post("/b2c-callback", (req, res) => {
                           `
                           INSERT INTO wallet_ledger
                           (user_id, uid, entry_type, direction,
-                           gross_amount, net_amount, reference, status)
+                           gross_amount, net_amount, balance_after, reference, status)
                           VALUES (?, ?, 'WITHDRAWAL_COMPLETED', 'DEBIT',
-                                  ?, ?, ?, 'COMPLETED')
+                                  ?, ?, ?, ?, 'COMPLETED')
                           `,
                           [
                             wd.user_id,
                             wd.uid,
                             amount,
                             amount,
+                            0, // balance_after (set to 0 for now)
                             TransactionID
                           ],
                           err => {

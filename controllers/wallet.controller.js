@@ -23,10 +23,10 @@ const releaseFundsIfGoalReached = async (profile_id, uid) => {
       `
       SELECT goal_amount, goal_raised
       FROM profiles
-      WHERE id = ?
+      WHERE uid = ?
       FOR UPDATE
       `,
-      [profile_id]
+      [uid]
     );
 
     if (

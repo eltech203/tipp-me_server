@@ -193,7 +193,7 @@ router.post("/b2c-callback", (req, res) => {
 
             const wd = rows[0];
             const amount = Number(wd.amount);
-
+            console.log("💰 Processing withdrawal:", withdrawalId, "Amount:", amount);
             // ❌ FAILURE
             if (ResultCode !== 0) {
               conn.query(
@@ -203,6 +203,7 @@ router.post("/b2c-callback", (req, res) => {
                 [TransactionID || ResultDesc, withdrawalId],
                 err => {
                   if (err) return rollback(err);
+                  console.log("❌ Withdrawal failed:",err);
                   conn.commit(() => conn.release());
                 }
               );
@@ -227,7 +228,7 @@ router.post("/b2c-callback", (req, res) => {
                   [amount, wd.user_id, amount],
                   err => {
                     if (err) return rollback(err);
-
+console.log("❌ Withdrawal failed:",err);
                     // 4️⃣ 🎯 Reduce goal_raised
                     conn.query(
                       `

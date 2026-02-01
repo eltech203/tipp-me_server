@@ -246,7 +246,7 @@ router.post("/callback", (req, res) => {
                     SET goal_raised = goal_raised + ?
                     WHERE uid = ? AND status = 'ACTIVE'
                     `,
-                    [amount, uid],
+                    [net, uid],
                     (err, result) => {
                     if (err) return rollback(err);
                     creditPlatform(); // continue flow

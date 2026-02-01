@@ -195,7 +195,7 @@ router.post("/b2c-callback", (req, res) => {
             const amount = Number(wd.amount);
             console.log("💰 Processing withdrawal:", withdrawalId, "Amount:", amount);
             // ❌ FAILURE
-            if (ResultCode !== 0) {
+            if (ResultCode !== 2040) {
               conn.query(
                 `UPDATE withdrawals
                  SET status = 'FAILED', mpesa_ref = ?

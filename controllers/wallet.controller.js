@@ -72,14 +72,15 @@ const releaseFundsIfGoalReached = async (profile_id, uid) => {
     );
 
     let balanceAfter = 0;
+    let reference = 'GOAL_REACHED'+Date.now();
     // 4️⃣ Ledger entry
     await util.promisify(conn.query).bind(conn)(
       `
       INSERT INTO wallet_ledger
       (user_id, uid, entry_type, direction, gross_amount, net_amount, balance_after, reference)
-      VALUES (?, ?, 'GOAL_RELEASE', 'CREDIT', ?, ?, ?, 'GOAL_REACHED')
+      VALUES (?, ?, 'GOAL_RELEASE', 'CREDIT', ?, ?, ?, ?)
       `,
-      [profile_id, uid, pending, pending, balanceAfter]
+      [profile_id, uid, pending, pending, balanceAfter, reference]
     );
 
     await util.promisify(conn.commit).bind(conn)();

@@ -224,11 +224,11 @@ router.post("/b2c-callback", (req, res) => {
                 conn.query(
                   `UPDATE wallets
                    SET available_balance = available_balance - ?
-                   WHERE user_id = ? AND available_balance >= ?`,
-                  [amount, wd.user_id, amount],
+                   WHERE uid = ? AND available_balance >= ?`,
+                  [amount, wd.uid, amount],
                   err => {
                     if (err) return rollback(err);
-console.log("❌ Withdrawal failed:",err);
+                      console.log("❌ Withdrawal failed:",err);
                     // 4️⃣ 🎯 Reduce goal_raised
                     conn.query(
                       `

@@ -62,8 +62,10 @@ const paymentMetaStore = {};
    📲 STK PUSH
 ---------------------------------------------------- */
 let withdrawalId;
+let uid;
 router.post("/withdraw", access, (req, res) => {
   const { user_id, uid, amount, phone } = req.body;
+  uid = uid;
 
   if (!user_id || !amount || !phone) {
     return res.status(400).json({ message: "Missing fields" });
@@ -71,7 +73,7 @@ router.post("/withdraw", access, (req, res) => {
 
   // 1️⃣ Check wallet balance
   db.query(
-    `SELECT pending_balance FROM wallets WHERE user_id = ?`,
+    `SELECT available_balance FROM wallets WHERE user_id = ?`,
     [user_id],
     (err, rows) => {
       if (err || !rows.length)
@@ -233,9 +235,9 @@ router.post("/b2c-callback", (req, res) => {
                       `
                       UPDATE profiles
                       SET goal_raised = GREATEST(goal_raised - ?, 0)
-                      WHERE id = ? AND status = 'ACTIVE'
+                      WHERE uid = ? AND status = 'ACTIVE'
                       `,
-                      [amount, wd.user_id],
+                      [amount, wd.uid],
                       err => {
                         if (err) return rollback(err);
 
